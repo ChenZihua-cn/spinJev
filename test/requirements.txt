@@ -1,0 +1,8 @@
+# Local dev (glibc >= 2.28) can use the latest mujoco; the cluster is pinned lower.
+# CentOS 7 cluster (glibc 2.17, kernel 3.10):
+#   - mujoco >= 3.3.5 only ships manylinux_2_27/2_28 wheels, so 3.3.4 is the ceiling.
+#   - Software rendering needs libOSMesa, which mesalib >= 22 no longer ships:
+#       conda create -y -n mujoco -c conda-forge python=3.11 mesalib=21.2.5 numpy pip
+#       conda run -n mujoco pip install mujoco==3.3.4
+mujoco==3.3.4
+numpy
