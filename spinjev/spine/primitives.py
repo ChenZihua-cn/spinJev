@@ -30,7 +30,8 @@ GRIP_TOL = 0.03
 GRIP_STALL_TORQUE = 0.85  # fraction of the servo ceiling that counts as "pushing against something"
 GRIP_STALL_VEL = 0.05     # rad/s: below this the jaw has stopped
 GRIP_STALL_TICKS = 5      # ... and it has stayed stopped for this many ticks
-CLOSE_Q = -0.22  # measured: the low end of the gripper range is jaws-shut# Pre-grasp opening. Not the mechanical end (2.0) and not the tightest fit: the channel between
+CLOSE_Q = -0.22  # measured: the low end of the gripper range is jaws-shut
+# Pre-grasp opening. Not the mechanical end (2.0) and not the tightest fit: the channel between
 # the jaws at the pinch depth is ~36 mm for a 30 mm block, so 6 mm of slack, and the 10 mm IK
 # residual eats most of that. Opening wider buys the straddle back.
 OPEN_Q = 1.8
