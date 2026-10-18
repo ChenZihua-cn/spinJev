@@ -22,6 +22,7 @@ from spinjev.backends.sim.mujoco_sim import TABLE_SCENE, Sim  # noqa: E402
 from spinjev.bus.schema import TAU_LIMIT  # noqa: E402
 from spinjev.spine.guard import FATAL, RADIUS_FENCE, TABLE_FORCE_LIMIT, Guard  # noqa: E402
 from spinjev.spine.primitives import CLOSE_Q, OPEN_Q, PHYS_DT, REACHED_TOL, Primitive, Spine  # noqa: E402
+from spinjev.perception.simulator import Perceptor  # noqa: E402
 from spinjev.tasks.pick_place import (  # noqa: E402
     DROP_ZONE,
     R_NEAR,
@@ -119,11 +120,11 @@ def envelope(sim, thetas=(0.0, 20.0, -20.0), rs=np.arange(0.16, 0.42, 0.02), zs=
         print("           " + "".join(f"{r:.2f}"[:3] + " " for r in rs[:4]))
 
 
-def success_rate(sim, spec, n=20, seed=5):
+def success_rate(sim, spec, n=20, seed=5, perceptor=None):
     """Run the scripted pick at N random reachable placements and report how many complete.
     This is the number that decides whether the task geometry is usable, so it is measured over
     the distribution the experts will actually sample, not at one lucky waypoint."""
-    env = PickPlace(sim=sim, spec=spec, seed=seed)
+    env = PickPlace(sim=sim, perceptor=perceptor or oracle(seed), spec=spec, seed=seed)
     rng = np.random.default_rng(seed)
     fails = {}
     done = 0
@@ -142,6 +143,13 @@ def success_rate(sim, spec, n=20, seed=5):
     for reason, count in sorted(fails.items(), key=lambda kv: -kv[1]):
         print(f"       {count:3d} x {reason}")
     return done, n
+
+
+def oracle(seed=0):
+    """A noiseless perceptor behind the *same* interface. Stage 1a asks whether the primitives can
+    complete a move, so it must not be graded through a pose estimator; the data path uses the noisy
+    one and --rate-noisy measures that separately."""
+    return Perceptor(sigma_clear=0.0, sigma_occluded=0.0, miss_rate=0.0, seed=seed)
 
 
 def load_sim(xml=None):
@@ -204,6 +212,7 @@ def check_ik(sim, n=60, seed=0):
 DEPTHS = (0.085, 0.095, 0.105, 0.115)
 LATERALS = (-0.055, -0.045, -0.035, -0.025, -0.015)
 SLIP_MAX = 0.05
+AIM_TICKS = 20      # detections averaged before descending (measured: 2/20 at 1, 15/20 at 20)
 
 
 def calibrate_grasp(sim):
@@ -216,7 +225,7 @@ def calibrate_grasp(sim):
     for depth in DEPTHS:
         for lat in LATERALS:
             spec = TaskSpec(grasp_depth=depth, grasp_lateral=lat)
-            env = PickPlace(sim=sim, spec=spec, seed=7)
+            env = PickPlace(sim=sim, perceptor=oracle(7), spec=spec, seed=7)
             env.reset(xy=OBJECT_XY, unreachable=False, occluded=False)
             th = env.heading_of(OBJECT_XY)
             status = env.drive(Primitive.APPROACH, env.wrist_goal(OBJECT_XY, env.block_z, th))
@@ -259,7 +268,7 @@ def check_guards(sim, spec):
     if "arm_straining" not in st.trips:
         raise AssertionError("sustained saturation did not trip")
 
-    env = PickPlace(sim=sim, spec=spec, seed=7)
+    env = PickPlace(sim=sim, perceptor=oracle(7), spec=spec, seed=7)
     env.reset(xy=OBJECT_XY, unreachable=False, occluded=False)
     status = env.drive(Primitive.APPROACH, np.array([OBJECT_XY[0], OBJECT_XY[1], 0.01]))
     frozen = sim.data.qpos[sim.arm_qadr].copy()
@@ -272,7 +281,7 @@ def check_guards(sim, spec):
 
 
 def check_prefilter(sim, spec):
-    env = PickPlace(sim=sim, spec=spec, seed=7)
+    env = PickPlace(sim=sim, perceptor=oracle(7), spec=spec, seed=7)
     env.reset(xy=OBJECT_XY, unreachable=False, occluded=False)
     legal = env.candidates()
     if Primitive.APPROACH not in legal or Primitive.CLOSE not in legal:
@@ -307,7 +316,7 @@ def check_prefilter(sim, spec):
 def scripted_pick(env):
     """The full sequence: home -> hover -> descend -> close -> lift -> carry -> release."""
     spec = env.spec
-    p = env.percept()
+    p = env.aim(AIM_TICKS)  # 对准: the grasp tolerance is smaller than one detection's error
     th = env.heading_of(p.pos[:2])
     for prim, goal in (
         (Primitive.APPROACH, spec.home),
@@ -339,7 +348,7 @@ def check_full_pick(sim, spec, need=2):
     legitimately fail, and the failure is data, not a bug (see the note on TaskSpec)."""
     ok_count = 0
     for xy in [(0.0, -0.24), (0.10, -0.28), (-0.12, -0.28), (0.05, -0.30)]:
-        env = PickPlace(sim=sim, spec=spec, seed=11)
+        env = PickPlace(sim=sim, perceptor=oracle(11), spec=spec, seed=11)
         env.reset(xy=xy, unreachable=False, occluded=False)
         t0 = time.perf_counter()
         scripted_pick(env)
@@ -378,6 +387,7 @@ def main():
     ap.add_argument("--profile", action="store_true", help="just print the jaw profile and exit")
     ap.add_argument("--envelope", action="store_true", help="just print the reach envelope grid")
     ap.add_argument("--rate", type=int, help="calibrate, then run N scripted picks and report the rate")
+    ap.add_argument("--rate-noisy", action="store_true", help="run --rate through the real noisy detector")
     ap.add_argument("--xml", help="scene variant to measure, for target-shape experiments")
     args = ap.parse_args()
 
@@ -403,7 +413,10 @@ def main():
     check_guards(sim, spec)
     check_prefilter(sim, spec)
     if args.rate:
-        success_rate(sim, spec, n=args.rate)
+        perc = Perceptor(seed=3) if args.rate_noisy else oracle(3)
+        label = "noisy detector (sigma 10 mm / 100 mm occluded)" if args.rate_noisy else "oracle pose"
+        print(f"     perception channel: {label}")
+        success_rate(sim, spec, n=args.rate, perceptor=perc)
         return 0
     check_full_pick(sim, spec)
     throughput(sim)
