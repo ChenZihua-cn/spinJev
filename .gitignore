@@ -151,6 +151,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv334
 env/
 venv/
 ENV/
@@ -216,3 +217,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# MuJoCo smoke test render output
+test/render_*.ppm
+
+# Local-only agent instructions (contains cluster host/account details)
+AGENTS.md
+
+# Sampling output: decision shards, event logs, checkpoints (PLAN 四: 输出目录不是代码包)
+data/
+*.jsonl
