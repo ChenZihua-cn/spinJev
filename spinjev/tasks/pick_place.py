@@ -19,6 +19,7 @@ import numpy as np
 
 from spinjev.backends.sim.mujoco_sim import TABLE_SCENE, Sim
 from spinjev.bus.schema import Percept
+from spinjev.perception.simulator import Perceptor
 from spinjev.spine.prefilter import Prefilter
 from spinjev.spine.primitives import OPEN_Q, Spine
 
@@ -35,7 +36,10 @@ R_TOO_CLOSE = (0.10, 0.17)  # "the arm cannot fold in that far" placements -- al
 DROP_ZONE = np.array([0.125, -0.216])  # 0.25 m out at +30 deg: the loaded arm shrinks its own envelope
 DROP_RADIUS = 0.07
 MIN_OBJECT_GAP = 0.12  # keep the block out of the drop zone so the transfer is a real step
-HOLD_CLEAR = 0.02  # "held" means the block centre rose this much above where it rests
+HOLD_CLEAR = 0.015  # "held" means the block centre rose this much above where it rests. Measured:
+# commanded a wrist height that should put it 20 mm up, the block arrives ~19 mm up because it
+# creeps in the grip -- 1.86 N*m of clamp torque on a 30 g block is not a rigid hold. Half the
+# block's own half-height is the smallest margin that still means "off the table with the hand".
 HOLD_TICKS = 25  # ... and it stays there for 0.5 s at 50 Hz
 SETTLE_TICKS = 30
 
@@ -116,7 +120,7 @@ class PickPlace:
                 np.concatenate([q, [self.sim.data.qpos[self.sim.gadr]]])
             )[:5],
         )
-        self.perceptor = perceptor
+        self.perceptor = perceptor if perceptor is not None else Perceptor(seed=seed)
         self.spec = spec
         self.rng = np.random.default_rng(seed)
         self.ep = Episode()
@@ -163,6 +167,8 @@ class PickPlace:
         self._prev_z = self.block_z
         self._settled = 0
         self._was_shut = False
+        if hasattr(self.perceptor, 'reset'):
+            self.perceptor.reset()  # a dropped detection must not inherit the last episode
         return self.ep
 
     def _sample_xy(self, unreachable):
@@ -197,10 +203,26 @@ class PickPlace:
         return self.sim.truth()
 
     def percept(self) -> Percept:
-        truth = self.truth()
-        if self.perceptor is None:
-            return Percept(pos=truth.obj_pos.copy())
-        return self.perceptor(truth, occluded=self.ep.occluded)
+        """Always a *detector* output, never the ground truth: PLAN 2.7 forbids any quantity the
+        real arm cannot measure from entering the observation, and the occluded branch only means
+        something if the pose estimate is allowed to be wrong."""
+        return self.perceptor(self.truth(), occluded=self.ep.occluded)
+
+    def aim(self, ticks=20):
+        """对准: hold still and average `ticks` detections.
+
+        Measured on this asset (2026-10-18): with sigma = 10 mm per axis and a single detection the
+        scripted grasp succeeds 2/20, because a 10 mm pose error is the same size as the ~10 mm the
+        jaws miss the block by -- the fingertips land on the block and press it into the table.
+        Averaging 20 detections restores it to 15/20 and 60 to 16/20. So the fix for a noisy pose
+        estimator is to look more than once, not to widen the guard.
+        """
+        samples = [self.percept() for _ in range(int(ticks))]
+        good = [p for p in samples if p.valid]
+        if not good:
+            return samples[-1]
+        pos = np.mean([p.pos for p in good], axis=0)
+        return Percept(pos=pos, valid=True, confidence=float(np.mean([p.confidence for p in good])))
 
     def wrist_goal(self, block_xy, block_z, heading, lift=0.0, depth=None, lateral=None):
         """Where the wrist has to be for the *grasp point* to land on the block (+ `lift`).
