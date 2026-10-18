@@ -7,6 +7,7 @@ Cluster-version pre-check (mujoco 3.3.4 is the ceiling there):
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -17,11 +18,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import mujoco  # noqa: E402
 
-from spinjev.backends.sim.mujoco_sim import Sim  # noqa: E402
+from spinjev.backends.sim.mujoco_sim import TABLE_SCENE, Sim  # noqa: E402
 from spinjev.bus.schema import TAU_LIMIT  # noqa: E402
 from spinjev.spine.guard import FATAL, RADIUS_FENCE, TABLE_FORCE_LIMIT, Guard  # noqa: E402
 from spinjev.spine.primitives import CLOSE_Q, OPEN_Q, PHYS_DT, REACHED_TOL, Primitive, Spine  # noqa: E402
-from spinjev.tasks.pick_place import DROP_ZONE, PickPlace, TaskSpec  # noqa: E402
+from spinjev.tasks.pick_place import (  # noqa: E402
+    DROP_ZONE,
+    R_NEAR,
+    R_REACH,
+    THETA_MAX,
+    PickPlace,
+    TaskSpec,
+)
 
 np.set_printoptions(precision=3, suppress=True)
 OBJECT_XY = (0.0, -0.24)
@@ -111,8 +119,33 @@ def envelope(sim, thetas=(0.0, 20.0, -20.0), rs=np.arange(0.16, 0.42, 0.02), zs=
         print("           " + "".join(f"{r:.2f}"[:3] + " " for r in rs[:4]))
 
 
-def load_sim():
-    sim = Sim(object_xy=OBJECT_XY)
+def success_rate(sim, spec, n=20, seed=5):
+    """Run the scripted pick at N random reachable placements and report how many complete.
+    This is the number that decides whether the task geometry is usable, so it is measured over
+    the distribution the experts will actually sample, not at one lucky waypoint."""
+    env = PickPlace(sim=sim, spec=spec, seed=seed)
+    rng = np.random.default_rng(seed)
+    fails = {}
+    done = 0
+    for _ in range(n):
+        r, th = rng.uniform(R_NEAR, R_REACH), rng.uniform(-THETA_MAX, THETA_MAX)
+        xy = np.array([r * math.sin(th), -r * math.cos(th)])
+        env.reset(xy=xy, unreachable=False, occluded=False)
+        scripted_pick(env)
+        if env.out.success:
+            done += 1
+        else:
+            key = env.out.reason or ("held" if env.out.held_ticks else "never gripped")
+            fails[key] = fails.get(key, 0) + 1
+    print(f"[rate] scripted pick succeeded {done}/{n} at reachable placements "
+          f"(r {R_NEAR:.2f}..{R_REACH:.2f} m, |theta| {math.degrees(THETA_MAX):.0f} deg)")
+    for reason, count in sorted(fails.items(), key=lambda kv: -kv[1]):
+        print(f"       {count:3d} x {reason}")
+    return done, n
+
+
+def load_sim(xml=None):
+    sim = Sim(xml=xml or TABLE_SCENE, object_xy=OBJECT_XY)
     if abs(sim.dt - PHYS_DT) > 1e-12:
         raise AssertionError(f"model timestep {sim.dt} != spine PHYS_DT {PHYS_DT}")
     print(f"[ok] sim ready: physics {sim.dt * 1000:.0f} ms -> {1 / sim.dt:.0f} Hz servo, "
@@ -344,9 +377,11 @@ def main():
     ap.add_argument("--solve-only", action="store_true", help="just re-run the descent calibration")
     ap.add_argument("--profile", action="store_true", help="just print the jaw profile and exit")
     ap.add_argument("--envelope", action="store_true", help="just print the reach envelope grid")
+    ap.add_argument("--rate", type=int, help="calibrate, then run N scripted picks and report the rate")
+    ap.add_argument("--xml", help="scene variant to measure, for target-shape experiments")
     args = ap.parse_args()
 
-    sim = load_sim()
+    sim = load_sim(args.xml)
     check_gripper_end(sim)
     if args.profile:
         describe_gripper(sim)
@@ -367,6 +402,9 @@ def main():
         return 0
     check_guards(sim, spec)
     check_prefilter(sim, spec)
+    if args.rate:
+        success_rate(sim, spec, n=args.rate)
+        return 0
     check_full_pick(sim, spec)
     throughput(sim)
     print("\n[PASS] spine primitives complete a scripted pick-and-place.")
