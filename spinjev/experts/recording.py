@@ -139,7 +139,7 @@ def decision_record(*, shard, seed, episode_index, decision, expert, event, term
     action, probs = choice.action, choice.probs
     cands = tuple(sorted(choice.candidates))
     chosen = "" if action.primitive is None else action.primitive.value
-    if cands:
+    if cands and (chosen or action.escalate):
         # The bus validator: a distribution over the candidates, and the chosen name among them.
         rec = json.loads(LogDecision(
             episode_id=int(episode_index), tick=int(dp.tick), obs=vector, candidates=cands,
@@ -148,13 +148,19 @@ def decision_record(*, shard, seed, episode_index, decision, expert, event, term
             outcome=None, truth=Truth(), t=float(dp.proprio.t),
         ).to_line())
     else:
-        # Nothing is legal, so there is no candidate distribution to validate and reporting is the
-        # only sane action. Written directly; the head does force P(escalate) = 1 here.
+        # A bus row describes a primitive that was chosen, or an escalate. Three of this
+        # collector's rows are neither: the terminal record (the episode is over, so the head
+        # commands nothing), a `hold` (a rejected waypoint or a replan), and an escalate with
+        # nothing legal, where there is no candidate distribution to validate. They are written in
+        # the same field shape without the validator; `escalate` and `esc_prob` still say which
+        # kind of row this is.
         rec = {
             "schema": SCHEMA_VERSION, "episode_id": int(episode_index), "tick": int(dp.tick),
-            "t": round(float(dp.proprio.t), 3), "obs": _vec(vector), "candidates": [],
-            "chosen": "", "probs": {}, "escalate": True,
-            "esc_prob": round(float(probs.escalate), 4), "outcome": None, "truth": None,
+            "t": round(float(dp.proprio.t), 3), "obs": _vec(vector), "candidates": list(cands),
+            "chosen": chosen,
+            "probs": {k: round(float(v), 4) for k, v in probs.primitives.items() if v > 0.0},
+            "escalate": bool(action.escalate), "esc_prob": round(float(probs.escalate), 4),
+            "outcome": None, "truth": None,
         }
     rec.update({
         "dataset": DATASET,
