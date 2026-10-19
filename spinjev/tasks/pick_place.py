@@ -32,7 +32,14 @@ R_REACH = 0.32  # outer radius of an ordinary grasp
 R_NEAR = 0.24  # inside this the elbow has no room
 THETA_MAX = math.radians(20)
 R_AWAY = (0.42, 0.55)  # "beyond the arm" placements
-R_TOO_CLOSE = (0.10, 0.17)  # "the arm cannot fold in that far" placements -- also escalate
+# Was (0.10, 0.17). Measured against the scripted expert, one placement per radius, 6 trials each,
+# heading straight ahead: r = 0.10 / 0.12 / 0.14 -> 0 of 6 placed, r = 0.15 / 0.16 / 0.18 -> 6 of 6
+# placed. So the top of the old band was *winnable* while carrying escalate ground truth, which is
+# exactly what PLAN 2.4 forbids ("不可达必须是物理上真不可达"): the policy was being paid +1 to report
+# on a block it could in fact pick. The band now stops at the measured cliff. The far half of the
+# branch needed no change: r >= 0.34 gives 0 of 6 placed and the pre-filter rejects the grasp
+# waypoint every time, so (0.42, 0.55) is well past the limit.
+R_TOO_CLOSE = (0.10, 0.14)  # "the arm cannot fold in that far" placements -- also escalate
 DROP_ZONE = np.array([0.125, -0.216])  # 0.25 m out at +30 deg: the loaded arm shrinks its own envelope
 DROP_RADIUS = 0.07
 MIN_OBJECT_GAP = 0.12  # keep the block out of the drop zone so the transfer is a real step
