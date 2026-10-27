@@ -6,3 +6,6 @@
 #       conda run -n mujoco pip install mujoco==3.3.4
 mujoco==3.3.4
 numpy
+
+# Overlays for scripts/render_pose_sources.py (video output only).
+pillow
