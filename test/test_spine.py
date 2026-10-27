@@ -124,14 +124,18 @@ def success_rate(sim, spec, n=20, seed=5, perceptor=None):
     """Run the scripted pick at N random reachable placements and report how many complete.
     This is the number that decides whether the task geometry is usable, so it is measured over
     the distribution the experts will actually sample, not at one lucky waypoint."""
-    env = PickPlace(sim=sim, perceptor=perceptor or oracle(seed), spec=spec, seed=seed)
+    perc = perceptor if perceptor is not None else oracle(seed)
+    env = PickPlace(sim=sim, perceptor=perc, spec=spec, seed=seed)
     rng = np.random.default_rng(seed)
     fails = {}
     done = 0
-    for _ in range(n):
+    for i in range(n):
         r, th = rng.uniform(R_NEAR, R_REACH), rng.uniform(-THETA_MAX, THETA_MAX)
         xy = np.array([r * math.sin(th), -r * math.cos(th)])
         env.reset(xy=xy, unreachable=False, occluded=False)
+        # env.reset() re-seeds the perceptor to its original seed; override it so each placement
+        # gets its own detection noise instead of 20 copies of one draw.
+        perc.reset(seed=seed * 1000003 + i)
         scripted_pick(env)
         if env.out.success:
             done += 1
@@ -212,7 +216,8 @@ def check_ik(sim, n=60, seed=0):
 DEPTHS = (0.085, 0.095, 0.105, 0.115)
 LATERALS = (-0.055, -0.045, -0.035, -0.025, -0.015)
 SLIP_MAX = 0.05
-AIM_TICKS = 20      # detections averaged before descending (measured: 2/20 at 1, 15/20 at 20)
+AIM_TICKS = 20      # detections averaged before descending (2026-10-27, independent noise
+                    # per placement: 12/20 at 1, 17/20 at 20, 19/20 at 60; oracle 17/20)
 
 
 def calibrate_grasp(sim):

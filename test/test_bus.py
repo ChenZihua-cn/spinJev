@@ -140,16 +140,18 @@ def check_reproducible():
 
 
 def check_occlusion_cost():
-    p = Perceptor(seed=0)
-    assert p.sigma(False) == p.sigma_clear and p.sigma(True) == p.sigma_occluded
-    ratio = p.sigma(True) / p.sigma(False)
+    # Two configs on purpose: the ratio assert guards the shipped default, the measurement
+    # below uses a harsher detector so occlusion actually drops ticks.
+    defaults = Perceptor(seed=0)
+    assert defaults.sigma(False) == defaults.sigma_clear and defaults.sigma(True) == defaults.sigma_occluded
+    ratio = defaults.sigma(True) / defaults.sigma(False)
     assert ratio >= 8.0, f"occlusion costs only {ratio:.1f}x sigma (PLAN 2.5 wants an order)"
 
     draws = 400
     err, invalid, conf, dropped = {}, {}, {}, {}
     for occluded in (False, True):
-        q = Perceptor(seed=42, sigma_clear=0.02, sigma_occluded=0.2, miss_rate=0.4)
-        got = [q(TRUTH, occluded=occluded) for _ in range(draws)]
+        stressed = Perceptor(seed=42, sigma_clear=0.02, sigma_occluded=0.2, miss_rate=0.4)
+        got = [stressed(TRUTH, occluded=occluded) for _ in range(draws)]
         err[occluded] = float(np.mean([np.linalg.norm(g.pos - OBJ) for g in got]))
         dropped[occluded] = [g for g in got if not g.valid]
         invalid[occluded] = len(dropped[occluded])
@@ -160,8 +162,9 @@ def check_occlusion_cost():
     assert err[True] > 3.0 * err[False], (err[True], err[False])
     assert conf[True] < conf[False], (conf[False], conf[True])
     print(f"[ok] perceptor: mean |err| {err[False] * 1000:.1f} mm clear vs "
-          f"{err[True] * 1000:.1f} mm occluded, sigma {p.sigma(False) * 1000:.0f} -> "
-          f"{p.sigma(True) * 1000:.0f} mm, {invalid[True]}/{draws} occluded ticks reported no "
+          f"{err[True] * 1000:.1f} mm occluded, sigma {stressed.sigma(False) * 1000:.0f} -> "
+          f"{stressed.sigma(True) * 1000:.0f} mm (stressed), "
+          f"{invalid[True]}/{draws} occluded ticks reported no "
           f"detection, mean confidence {conf[False]:.2f} -> {conf[True]:.2f}")
 
 

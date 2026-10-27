@@ -218,11 +218,11 @@ class PickPlace:
     def aim(self, ticks=20):
         """对准: hold still and average `ticks` detections.
 
-        Measured on this asset (2026-10-18): with sigma = 10 mm per axis and a single detection the
-        scripted grasp succeeds 2/20, because a 10 mm pose error is the same size as the ~10 mm the
-        jaws miss the block by -- the fingertips land on the block and press it into the table.
-        Averaging 20 detections restores it to 15/20 and 60 to 16/20. So the fix for a noisy pose
-        estimator is to look more than once, not to widen the guard.
+        Measured on this asset (2026-10-27, 20 placements, a fresh detection draw per placement):
+        sigma = 10 mm per axis, single detection 12/20 (mean 3D error 16.8 mm); a 20-frame average
+        17/20 (3.1 mm), 60 frames 19/20 (2.0 mm); the oracle is 17/20. The 3D error is ~sqrt(3)
+        times sigma, so the old "10 mm vs 10 mm" framing was optimistic. Averaging gets back to the
+        mechanical ceiling; the remaining failures are the ~10 mm pinch basin and grip slip.
         """
         samples = [self.percept() for _ in range(int(ticks))]
         good = [p for p in samples if p.valid]
